@@ -21,3 +21,35 @@
 | Database | Write `docs/database-schema.md` (User and StudyGroup fields); screenshot data in Compass | 
 | Security/Tester | Write `docs/test-cases.md`; test all endpoints in Postman with screenshots | 
 
+## Project Overview
+Study Group Planner is a web application designed to help students organize and manage study groups for their courses. Users can register, log in, create study groups, view available groups, and manage the groups they own.
+
+## Project Objectives
+- Provide a centralized platform for managing study groups.
+- Allow users to create, view, update, and delete study groups.
+- Implement secure user authentication and authorization.
+- Connect the application to MongoDB using Node.js and Express.
+- Support teamwork through GitHub and Trello.
+
+## Key Features
+- User registration and login
+- Study group creation and listing
+- Editing and deleting study groups
+- User profile page
+- JWT-based authentication
+- Authorization for group owners and administrators
+
+## Project Management
+The team uses Trello to organize the Product Backlog and track tasks through To Do, In Progress, and Done. GitHub is used for version control and collaboration.
+
+## Project Team
+- Chamudi Shehara Hennayaka
+- Hwanhui Lee
+- Jihyun Kim
+- sunhum park 
+- Robert Morada
+
+Project Manager: Park Sun Heum
+
+Course: COMP229 - Web Application Development
+Project: Stack Five - Study Group Planner
