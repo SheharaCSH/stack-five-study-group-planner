@@ -1,11 +1,18 @@
 import React, { useState } from 'react';
-import { Card, CardContent, Typography, TextField, Button, CardActions } from '@mui/material';
-import { useNavigate } from 'react-router-dom';
+import {
+  Card,
+  CardContent,
+  Typography,
+  TextField,
+  Button,
+  CardActions
+} from '@mui/material';
+import { useNavigate, Link } from 'react-router-dom';
 import axios from 'axios';
 
 export default function Signin() {
   const navigate = useNavigate();
-  
+
   const [values, setValues] = useState({
     email: '',
     password: '',
@@ -18,26 +25,38 @@ export default function Signin() {
 
   const clickSubmit = () => {
     const user = {
-      email: values.email || undefined,
-      password: values.password || undefined
+      email: values.email,
+      password: values.password
     };
 
     axios.post('http://localhost:5000/api/auth/login', user)
       .then(response => {
-        if (response.data.token) {
-          localStorage.setItem('jwt', JSON.stringify(response.data.token));
-          localStorage.setItem('user', JSON.stringify(response.data.user));
+        const { token, ...userData } = response.data;
+
+        if (token) {
+          localStorage.setItem('jwt', JSON.stringify(token));
+          localStorage.setItem('user', JSON.stringify(userData));
+
           navigate('/');
         }
       })
       .catch(err => {
-        const errorMessage = err.response?.data?.message || 'Failed to sign in. Please check your credentials.';
+        const errorMessage =
+          err.response?.data?.message ||
+          'Failed to sign in. Please check your credentials.';
+
         setValues({ ...values, error: errorMessage });
       });
   };
 
   return (
-    <Card sx={{ maxWidth: 500, margin: 'auto', mt: 8, p: 3, textAlign: 'center' }}>
+    <Card sx={{
+      maxWidth: 500,
+      margin: 'auto',
+      mt: 8,
+      p: 3,
+      textAlign: 'center'
+    }}>
       <CardContent>
         <Typography variant="h5" sx={{ mb: 3, fontWeight: 'bold' }}>
           Sign In
@@ -70,10 +89,33 @@ export default function Signin() {
         )}
       </CardContent>
 
-      <CardActions sx={{ justifyContent: 'center', pb: 2 }}>
-        <Button color="primary" variant="contained" onClick={clickSubmit} sx={{ width: '100%', py: 1.5 }}>
+      <CardActions sx={{
+        flexDirection: 'column',
+        px: 3,
+        pb: 3
+      }}>
+        <Button
+          color="primary"
+          variant="contained"
+          onClick={clickSubmit}
+          sx={{ width: '100%', py: 1.5, mb: 2 }}
+        >
           Sign In
         </Button>
+
+        <Typography variant="body2">
+          Don't have an account?{' '}
+          <Link
+            to="/signup"
+            style={{
+              color: '#1976d2',
+              textDecoration: 'none',
+              fontWeight: 'bold'
+            }}
+          >
+            Sign Up
+          </Link>
+        </Typography>
       </CardActions>
     </Card>
   );
