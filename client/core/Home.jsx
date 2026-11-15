@@ -21,6 +21,15 @@ import {
 import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
 
+const emptyValues = {
+  name: '',
+  course: '',
+  description: '',
+  location: '',
+  meetingTime: '',
+  maxMembers: '10'
+};
+
 export default function Home() {
   const navigate = useNavigate();
 
@@ -30,19 +39,15 @@ export default function Home() {
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
 
-  const [openDialog, setOpenDialog] = useState(false);
-  const [creating, setCreating] = useState(false);
+  const [openFormDialog, setOpenFormDialog] = useState(false);
+  const [formMode, setFormMode] = useState('create');
+  const [saving, setSaving] = useState(false);
+  const [values, setValues] = useState(emptyValues);
 
-  const [values, setValues] = useState({
-    name: '',
-    course: '',
-    description: '',
-    location: '',
-    meetingTime: '',
-    maxMembers: '10'
-  });
+  const [selectedGroup, setSelectedGroup] = useState(null);
+  const [openDeleteConfirm, setOpenDeleteConfirm] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
-  // Get the current user's ID
   const getCurrentUserId = () => {
     try {
       const user = JSON.parse(localStorage.getItem('user'));
@@ -54,42 +59,51 @@ export default function Home() {
 
   const currentUserId = getCurrentUserId();
 
-  // Get an ID from a populated object or an ID string
   const getId = (value) => {
     if (!value) return null;
     return String(value._id || value.id || value);
   };
 
-  // Check whether the current user created a group
   const isCreatedByMe = (group) => {
     return getId(group.createdBy) === String(currentUserId);
   };
 
-  // Check whether the current user belongs to a group
   const isMyGroup = (group) => {
     const isCreator = isCreatedByMe(group);
-
     const isMember = group.members?.some(
       member => getId(member) === String(currentUserId)
     );
-
     return isCreator || isMember;
   };
 
-  // Filter groups for My Groups tab
   const myGroups = groups.filter(isMyGroup);
 
-  // Fetch all study groups
+  const getToken = () => {
+    const storedJwt = localStorage.getItem('jwt');
+    if (!storedJwt) return null;
+
+    try {
+      return JSON.parse(storedJwt);
+    } catch {
+      return storedJwt;
+    }
+  };
+
   const fetchGroups = async () => {
     setLoading(true);
     setError('');
 
     try {
-      const response = await axios.get(
-        'http://localhost:5000/api/groups'
-      );
-
+      const response = await axios.get('http://localhost:5000/api/groups');
       setGroups(response.data);
+
+      // Keep the selected group's details in sync after an update.
+      if (selectedGroup) {
+        const updatedSelectedGroup = response.data.find(
+          group => group._id === selectedGroup._id
+        );
+        setSelectedGroup(updatedSelectedGroup || null);
+      }
     } catch (err) {
       console.error(err);
       setError('Failed to load study groups. Please check the server.');
@@ -100,45 +114,70 @@ export default function Home() {
 
   useEffect(() => {
     fetchGroups();
+    // Initial list load only.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Change tabs
   const handleTabChange = (event, newValue) => {
     setTab(newValue);
     setError('');
     setSuccess('');
   };
 
-  // Handle form input
   const handleChange = (event) => {
     const { name, value } = event.target;
-
     setValues(prev => ({
       ...prev,
       [name]: value
     }));
   };
 
-  // Open the new group dialog
-  const handleOpenDialog = () => {
-    if (!localStorage.getItem('jwt')) {
+  const handleOpenCreateDialog = () => {
+    if (!getToken()) {
       navigate('/signin');
       return;
     }
 
+    setValues({ ...emptyValues });
+    setFormMode('create');
     setError('');
-    setSuccess('');
-    setOpenDialog(true);
+    setOpenFormDialog(true);
   };
 
-  // Close the new group dialog
-  const handleCloseDialog = () => {
-    if (creating) return;
-    setOpenDialog(false);
+  const handleOpenEditDialog = () => {
+    if (!selectedGroup) return;
+
+    const meetingTime = selectedGroup.meetingTime
+      ? (() => {
+          const date = new Date(selectedGroup.meetingTime);
+          const localDate = new Date(
+            date.getTime() - date.getTimezoneOffset() * 60000
+          );
+          return localDate.toISOString().slice(0, 16);
+        })()
+      : '';
+
+    setValues({
+      name: selectedGroup.name || '',
+      course: selectedGroup.course || '',
+      description: selectedGroup.description || '',
+      location: selectedGroup.location || '',
+      meetingTime,
+      maxMembers: String(selectedGroup.maxMembers || 10)
+    });
+
+    setFormMode('edit');
+    setError('');
+    setOpenFormDialog(true);
   };
 
-  // Create a new study group
-  const handleCreateGroup = async (event) => {
+  const handleCloseFormDialog = () => {
+    if (saving) return;
+    setOpenFormDialog(false);
+    setError('');
+  };
+
+  const handleSubmitGroup = async (event) => {
     event.preventDefault();
 
     if (!values.name.trim() || !values.course.trim()) {
@@ -146,27 +185,18 @@ export default function Home() {
       return;
     }
 
-    if (Number(values.maxMembers) < 1) {
+    if (!Number.isFinite(Number(values.maxMembers)) || Number(values.maxMembers) < 1) {
       setError('Maximum Members must be at least 1.');
       return;
     }
 
-    const jwt = localStorage.getItem('jwt');
-
-    if (!jwt) {
+    const token = getToken();
+    if (!token) {
       navigate('/signin');
       return;
     }
 
-    let token;
-
-    try {
-      token = JSON.parse(jwt);
-    } catch {
-      token = jwt;
-    }
-
-    const newGroup = {
+    const groupData = {
       name: values.name.trim(),
       course: values.course.trim(),
       description: values.description,
@@ -175,18 +205,74 @@ export default function Home() {
     };
 
     if (values.meetingTime) {
-      newGroup.meetingTime = new Date(
-        values.meetingTime
-      ).toISOString();
+      const parsedMeetingTime = new Date(values.meetingTime);
+      if (Number.isNaN(parsedMeetingTime.getTime())) {
+        setError('Please enter a valid meeting time.');
+        return;
+      }
+      groupData.meetingTime = parsedMeetingTime.toISOString();
     }
 
-    setCreating(true);
+    setSaving(true);
     setError('');
 
     try {
-      await axios.post(
-        'http://localhost:5000/api/groups',
-        newGroup,
+      if (formMode === 'edit') {
+        await axios.put(
+          `http://localhost:5000/api/groups/${selectedGroup._id}`,
+          groupData,
+          {
+            headers: {
+              Authorization: `Bearer ${token}`
+            }
+          }
+        );
+        setSuccess('Study group updated successfully!');
+      } else {
+        await axios.post(
+          'http://localhost:5000/api/groups',
+          groupData,
+          {
+            headers: {
+              Authorization: `Bearer ${token}`
+            }
+          }
+        );
+        setSuccess('Study group created successfully!');
+      }
+
+      setOpenFormDialog(false);
+      await fetchGroups();
+
+      if (formMode === 'create') {
+        setTab(0);
+      }
+    } catch (err) {
+      console.error(err);
+      setError(
+        err.response?.data?.message ||
+        `Failed to ${formMode === 'edit' ? 'update' : 'create'} the study group.`
+      );
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleDeleteGroup = async () => {
+    if (!selectedGroup) return;
+
+    const token = getToken();
+    if (!token) {
+      navigate('/signin');
+      return;
+    }
+
+    setDeleting(true);
+    setError('');
+
+    try {
+      await axios.delete(
+        `http://localhost:5000/api/groups/${selectedGroup._id}`,
         {
           headers: {
             Authorization: `Bearer ${token}`
@@ -194,42 +280,49 @@ export default function Home() {
         }
       );
 
-      setValues({
-        name: '',
-        course: '',
-        description: '',
-        location: '',
-        meetingTime: '',
-        maxMembers: '10'
-      });
-
-      setOpenDialog(false);
-      setSuccess('Study group created successfully!');
-
+      setOpenDeleteConfirm(false);
+      setSelectedGroup(null);
+      setSuccess('Study group deleted successfully!');
       await fetchGroups();
-
-      // Show the newly created group in My Groups
-      setTab(0);
-
     } catch (err) {
       console.error(err);
-
       setError(
         err.response?.data?.message ||
-        'Failed to create the study group.'
+        'Failed to delete the study group.'
       );
+      setOpenDeleteConfirm(false);
     } finally {
-      setCreating(false);
+      setDeleting(false);
     }
   };
 
-  // Render a study group card
   const renderGroupCard = (group) => (
     <Grid item xs={12} sm={6} md={4} key={group._id}>
-      <Card sx={{
-        height: '100%',
-        boxShadow: 3
-      }}>
+      <Card
+        onClick={() => {
+          setSelectedGroup(group);
+          setError('');
+        }}
+        role="button"
+        tabIndex={0}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault();
+            setSelectedGroup(group);
+            setError('');
+          }
+        }}
+        sx={{
+          height: '100%',
+          boxShadow: 3,
+          cursor: 'pointer',
+          transition: 'transform 0.15s, box-shadow 0.15s',
+          '&:hover': {
+            transform: 'translateY(-3px)',
+            boxShadow: 6
+          }
+        }}
+      >
         <CardContent>
           <Box sx={{
             display: 'flex',
@@ -238,10 +331,7 @@ export default function Home() {
             gap: 1,
             mb: 1
           }}>
-            <Typography
-              variant="h6"
-              sx={{ fontWeight: 'bold' }}
-            >
+            <Typography variant="h6" sx={{ fontWeight: 'bold' }}>
               {group.name}
             </Typography>
 
@@ -258,45 +348,90 @@ export default function Home() {
             Course: {group.course || 'N/A'}
           </Typography>
 
-          <Typography variant="body2" sx={{ mb: 2 }}>
+          <Typography variant="body2" sx={{ mb: 1 }}>
             {group.description || 'No description provided.'}
           </Typography>
 
-          <Typography
-            variant="body2"
-            color="text.secondary"
-            sx={{ mb: 1 }}
-          >
-            Location: {group.location || 'Online / TBD'}
-          </Typography>
-
-          <Typography
-            variant="body2"
-            color="text.secondary"
-            sx={{ mb: 1 }}
-          >
-            Meeting Time: {
-              group.meetingTime
-                ? new Date(group.meetingTime).toLocaleString()
-                : 'TBD'
-            }
-          </Typography>
-
-          <Typography
-            variant="body2"
-            color="text.secondary"
-          >
-            Maximum Members: {group.maxMembers || 10}
+          <Typography variant="body2" color="text.secondary">
+            Click to view details
           </Typography>
         </CardContent>
       </Card>
     </Grid>
   );
 
+  const renderFormFields = () => (
+    <>
+      <TextField
+        name="name"
+        label="Group Name"
+        value={values.name}
+        onChange={handleChange}
+        fullWidth
+        required
+        margin="normal"
+      />
+
+      <TextField
+        name="course"
+        label="Course"
+        value={values.course}
+        onChange={handleChange}
+        fullWidth
+        required
+        margin="normal"
+      />
+
+      <TextField
+        name="description"
+        label="Description"
+        value={values.description}
+        onChange={handleChange}
+        fullWidth
+        multiline
+        rows={3}
+        margin="normal"
+      />
+
+      <TextField
+        name="location"
+        label="Location"
+        value={values.location}
+        onChange={handleChange}
+        fullWidth
+        margin="normal"
+      />
+
+      <TextField
+        name="meetingTime"
+        label="Meeting Time"
+        type="datetime-local"
+        value={values.meetingTime}
+        onChange={handleChange}
+        fullWidth
+        margin="normal"
+        slotProps={{
+          inputLabel: { shrink: true }
+        }}
+      />
+
+      <TextField
+        name="maxMembers"
+        label="Maximum Members"
+        type="number"
+        value={values.maxMembers}
+        onChange={handleChange}
+        fullWidth
+        margin="normal"
+        slotProps={{
+          htmlInput: { min: 1 }
+        }}
+      />
+    </>
+  );
+
   return (
     <Container maxWidth="lg" sx={{ mt: 4, mb: 4 }}>
-
-      {/* Page Header */}
       <Box sx={{ mb: 3 }}>
         <Typography
           variant="h4"
@@ -311,7 +446,6 @@ export default function Home() {
         </Typography>
       </Box>
 
-      {/* Tabs */}
       <Box sx={{ borderBottom: 1, borderColor: 'divider', mb: 3 }}>
         <Tabs
           value={tab}
@@ -324,7 +458,6 @@ export default function Home() {
         </Tabs>
       </Box>
 
-      {/* Messages */}
       {success && (
         <Alert
           severity="success"
@@ -335,7 +468,7 @@ export default function Home() {
         </Alert>
       )}
 
-      {error && (
+      {error && !openFormDialog && !openDeleteConfirm && (
         <Alert
           severity="error"
           sx={{ mb: 2 }}
@@ -355,7 +488,6 @@ export default function Home() {
         </Box>
       ) : (
         <>
-          {/* My Groups Tab */}
           {tab === 0 && (
             <Box>
               <Typography
@@ -381,7 +513,6 @@ export default function Home() {
             </Box>
           )}
 
-          {/* View Groups Tab */}
           {tab === 1 && (
             <Box>
               <Box sx={{
@@ -399,7 +530,7 @@ export default function Home() {
 
                 <Button
                   variant="contained"
-                  onClick={handleOpenDialog}
+                  onClick={handleOpenCreateDialog}
                 >
                   New Group
                 </Button>
@@ -423,84 +554,103 @@ export default function Home() {
         </>
       )}
 
-      {/* New Group Dialog */}
+      {/* Group Details Dialog */}
       <Dialog
-        open={openDialog}
-        onClose={handleCloseDialog}
+        open={Boolean(selectedGroup)}
+        onClose={() => setSelectedGroup(null)}
         fullWidth
         maxWidth="sm"
       >
-        <Box component="form" onSubmit={handleCreateGroup}>
+        {selectedGroup && (
+          <>
+            <DialogTitle sx={{ fontWeight: 'bold' }}>
+              {selectedGroup.name}
+            </DialogTitle>
+
+            <DialogContent dividers>
+              {isCreatedByMe(selectedGroup) && (
+                <Chip
+                  label="Created by you"
+                  color="success"
+                  size="small"
+                  sx={{ mb: 2 }}
+                />
+              )}
+
+              <Typography sx={{ mb: 1 }}>
+                <strong>Course:</strong> {selectedGroup.course || 'N/A'}
+              </Typography>
+
+              <Typography sx={{ mb: 1, whiteSpace: 'pre-wrap' }}>
+                <strong>Description:</strong>{' '}
+                {selectedGroup.description || 'No description provided.'}
+              </Typography>
+
+              <Typography sx={{ mb: 1 }}>
+                <strong>Location:</strong>{' '}
+                {selectedGroup.location || 'Online / TBD'}
+              </Typography>
+
+              <Typography sx={{ mb: 1 }}>
+                <strong>Meeting Time:</strong>{' '}
+                {selectedGroup.meetingTime
+                  ? new Date(selectedGroup.meetingTime).toLocaleString()
+                  : 'TBD'}
+              </Typography>
+
+              <Typography>
+                <strong>Maximum Members:</strong>{' '}
+                {selectedGroup.maxMembers || 10}
+              </Typography>
+            </DialogContent>
+
+            <DialogActions sx={{ p: 2 }}>
+              <Button
+                onClick={() => setSelectedGroup(null)}
+                color="inherit"
+              >
+                Close
+              </Button>
+
+              {isCreatedByMe(selectedGroup) && (
+                <>
+                  <Button
+                    onClick={handleOpenEditDialog}
+                    variant="outlined"
+                  >
+                    Edit
+                  </Button>
+
+                  <Button
+                    onClick={() => setOpenDeleteConfirm(true)}
+                    color="error"
+                    variant="contained"
+                  >
+                    Delete
+                  </Button>
+                </>
+              )}
+            </DialogActions>
+          </>
+        )}
+      </Dialog>
+
+      {/* Create / Edit Group Dialog */}
+      <Dialog
+        open={openFormDialog}
+        onClose={handleCloseFormDialog}
+        fullWidth
+        maxWidth="sm"
+      >
+        <Box component="form" onSubmit={handleSubmitGroup}>
           <DialogTitle sx={{ fontWeight: 'bold' }}>
-            Create a New Study Group
+            {formMode === 'edit'
+              ? 'Edit Study Group'
+              : 'Create a New Study Group'}
           </DialogTitle>
 
           <DialogContent>
-            <TextField
-              name="name"
-              label="Group Name"
-              value={values.name}
-              onChange={handleChange}
-              fullWidth
-              required
-              margin="normal"
-            />
-
-            <TextField
-              name="course"
-              label="Course"
-              value={values.course}
-              onChange={handleChange}
-              fullWidth
-              required
-              margin="normal"
-            />
-
-            <TextField
-              name="description"
-              label="Description"
-              value={values.description}
-              onChange={handleChange}
-              fullWidth
-              multiline
-              rows={3}
-              margin="normal"
-            />
-
-            <TextField
-              name="location"
-              label="Location"
-              value={values.location}
-              onChange={handleChange}
-              fullWidth
-              margin="normal"
-            />
-
-            <TextField
-              name="meetingTime"
-              label="Meeting Time"
-              type="datetime-local"
-              value={values.meetingTime}
-              onChange={handleChange}
-              fullWidth
-              margin="normal"
-              slotProps={{
-                inputLabel: { shrink: true }
-              }}
-            />
-
-            <TextField
-              name="maxMembers"
-              label="Maximum Members"
-              type="number"
-              value={values.maxMembers}
-              onChange={handleChange}
-              fullWidth
-              margin="normal"
-              slotProps={{
-                htmlInput: { min: 1 }
-              }}
-            />
+            {renderFormFields()}
 
             {error && (
               <Alert severity="error" sx={{ mt: 2 }}>
@@ -511,9 +661,9 @@ export default function Home() {
 
           <DialogActions sx={{ p: 2 }}>
             <Button
-              onClick={handleCloseDialog}
+              onClick={handleCloseFormDialog}
               color="inherit"
-              disabled={creating}
+              disabled={saving}
             >
               Cancel
             </Button>
@@ -521,14 +671,56 @@ export default function Home() {
             <Button
               type="submit"
               variant="contained"
-              disabled={creating}
+              disabled={saving}
             >
-              {creating ? 'Creating...' : 'Create Group'}
+              {saving
+                ? (formMode === 'edit' ? 'Saving...' : 'Creating...')
+                : (formMode === 'edit' ? 'Save Changes' : 'Create Group')}
             </Button>
           </DialogActions>
         </Box>
       </Dialog>
 
+      {/* Delete Confirmation Dialog */}
+      <Dialog
+        open={openDeleteConfirm}
+        onClose={() => {
+          if (!deleting) setOpenDeleteConfirm(false);
+        }}
+        maxWidth="xs"
+        fullWidth
+      >
+        <DialogTitle sx={{ fontWeight: 'bold' }}>
+          Delete Study Group?
+        </DialogTitle>
+
+        <DialogContent>
+          <Typography>
+            Are you sure you want to delete
+            {' '}<strong>{selectedGroup?.name}</strong>?
+            This action cannot be undone.
+          </Typography>
+        </DialogContent>
+
+        <DialogActions sx={{ p: 2 }}>
+          <Button
+            onClick={() => setOpenDeleteConfirm(false)}
+            color="inherit"
+            disabled={deleting}
+          >
+            Cancel
+          </Button>
+
+          <Button
+            onClick={handleDeleteGroup}
+            color="error"
+            variant="contained"
+            disabled={deleting}
+          >
+            {deleting ? 'Deleting...' : 'Delete'}
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Container>
   );
 }
